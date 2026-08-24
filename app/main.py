@@ -4,12 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 import app.models  # noqa: F401  (registers models on Base.metadata)
-from app.routers import auth, application
+from app.routers import auth, application, interview_round
 
 app = FastAPI(title="Job Application Tracker API", version="0.1.0")
 
 app.include_router(auth.router)
 app.include_router(application.router)
+app.include_router(interview_round.router)
 
 
 @app.get("/health")
