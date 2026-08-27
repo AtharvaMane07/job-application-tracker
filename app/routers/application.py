@@ -1,13 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.auth.dependencies import get_current_user
 from app.models.user import User
-from app.models.application import Application
+from app.models.application import Application, ApplicationStatus
 from app.models.status_history import StatusHistory
 from app.schemas.application import ApplicationCreate, ApplicationUpdate, ApplicationOut
 from app.schemas.status_history import StatusHistoryOut
+from app.schemas.dashboard import DashboardSummary
+from app.cache import (
+    dashboard_cache_key,
+    get_cached_json,
+    set_cached_json,
+    invalidate_dashboard_cache,
+    DASHBOARD_CACHE_TTL_SECONDS,
+)
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -31,6 +40,36 @@ def _get_owned_application(
     return app_obj
 
 
+@router.get("/dashboard/summary", response_model=DashboardSummary)
+def get_dashboard_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Read-heavy endpoint: count of the caller's applications grouped by status.
+    Cached in Redis per-user, invalidated immediately on any Application
+    create/update/delete for that user, with a short TTL as a self-healing
+    backstop in case an invalidation call is ever missed.
+    """
+    cache_key = dashboard_cache_key(current_user.id)
+    cached = get_cached_json(cache_key)
+    if cached is not None:
+        return cached
+
+    rows = (
+        db.query(Application.status, func.count(Application.id))
+        .filter(Application.user_id == current_user.id)
+        .group_by(Application.status)
+        .all()
+    )
+    counts_by_status = {status_value.value: count for status_value, count in rows}
+    total = sum(counts_by_status.values())
+
+    result = {"counts_by_status": counts_by_status, "total": total}
+    set_cached_json(cache_key, result, DASHBOARD_CACHE_TTL_SECONDS)
+    return result
+
+
 @router.post("", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
 def create_application(
     payload: ApplicationCreate,
@@ -41,6 +80,7 @@ def create_application(
     db.add(app_obj)
     db.commit()
     db.refresh(app_obj)
+    invalidate_dashboard_cache(current_user.id)
     return app_obj
 
 
@@ -91,6 +131,7 @@ def update_application(
 
     db.commit()
     db.refresh(app_obj)
+    invalidate_dashboard_cache(current_user.id)
     return app_obj
 
 
@@ -103,6 +144,7 @@ def delete_application(
     app_obj = _get_owned_application(application_id, db, current_user)
     db.delete(app_obj)
     db.commit()
+    invalidate_dashboard_cache(current_user.id)
     return None
 
 
