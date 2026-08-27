@@ -11,7 +11,8 @@ bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
 email-validator==2.2.0
 
-# added ahead of schedule (Week 4+) — do not implement code against these yet
-# redis==5.0.8
+redis==5.0.8
+
+# added ahead of schedule (Week 6+) — do not implement code against these yet
 # pytest==8.3.3
 # httpx==0.27.2
